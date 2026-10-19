@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import CodeEditor from "@uiw/react-textarea-code-editor";
 import Landing from "./Landing";
+import { fetchGame } from "./lib/ai";
 
 
 const SYSTEM_PROMPT = `\
@@ -45,18 +46,6 @@ Every game runs inside a sandboxed iframe (sandbox="allow-scripts") with zero ex
 - Preserve all existing game logic, scoring, visual style, and control scheme unless explicitly told to change them
 - Always return the COMPLETE updated HTML file from <!DOCTYPE html> to </html>`;
 
-async function fetchAI(prompt, signal) {
-  const res = await fetch("/api/chat", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt, systemPrompt: SYSTEM_PROMPT }),
-    signal,
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data?.error || res.statusText);
-  return data.text;
-}
-
 function extractHTML(text) {
   const match = text.match(/```html\n?([\s\S]*?)```/);
   if (match) return match[1];
@@ -82,11 +71,13 @@ export default function App() {
   const [tab, setTab] = useState("chat");
   const [showHome, setShowHome] = useState(true);
   const [messages, setMessages] = useState([
-    { role: "assistant", content: "Welcome to VibeStudio! Describe a 2D game and I'll build it instantly. Then switch to the Code tab to edit it live." },
+    { role: "assistant", content: "Welcome to VibeStudio! Describe a 2D game and I'll build it. Detailed games can take a few minutes. Then switch to the Code tab to edit it live." },
   ]);
   const [input, setInput] = useState("");
   const [code, setCode] = useState(DEFAULT_CODE);
   const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState({ phase: "connecting", characters: 0 });
+  const [elapsed, setElapsed] = useState(0);
   const [previewKey, setPreviewKey] = useState(0);
   const [copied, setCopied] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
@@ -107,6 +98,13 @@ export default function App() {
       abortRef.current?.abort();
     };
   }, []);
+
+  useEffect(() => {
+    if (!loading) return;
+    const startedAt = Date.now();
+    const timer = setInterval(() => setElapsed(Math.floor((Date.now() - startedAt) / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, [loading]);
 
 
   useEffect(() => {
@@ -154,16 +152,24 @@ export default function App() {
     const isRefine = !code.includes("Your game will appear here");
     setMessages((prev) => [...prev, { role: "user", content: userText }]);
     setLoading(true);
+    setElapsed(0);
+    setProgress({ phase: "connecting", characters: 0 });
 
     abortRef.current?.abort();
-    abortRef.current = new AbortController();
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     const prompt = isRefine
       ? `Here is the current game code:\n\n${code}\n\nUser request: "${userText}"`
       : `Create a 2D browser game: "${userText}"`;
 
     try {
-      const text = await fetchAI(prompt, abortRef.current.signal);
+      const text = await fetchGame(prompt, {
+        systemPrompt: SYSTEM_PROMPT,
+        signal: controller.signal,
+        onProgress: setProgress,
+      });
+      if (abortRef.current !== controller) return;
       const html = extractHTML(text);
       setCode(html);
       setPreviewKey((k) => k + 1);
@@ -174,11 +180,16 @@ export default function App() {
           : "Game ready! Check the preview on the right. Switch to the Code tab to edit it live.",
       }]);
     } catch (err) {
-      if (err.name !== "AbortError") {
-        setMessages((prev) => [...prev, { role: "assistant", content: err.message || "Something went wrong. Check your API key and try again." }]);
-      }
+      if (abortRef.current !== controller) return;
+      setMessages((prev) => [...prev, { role: "assistant", content: controller.signal.aborted
+        ? "Generation stopped. Edit your prompt and try again whenever you're ready."
+        : err.message || "Something went wrong. Please try again." }]);
+      setInput((current) => current || userText);
     } finally {
-      setLoading(false);
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+        setLoading(false);
+      }
     }
   };
 
@@ -290,10 +301,14 @@ export default function App() {
                   {loading && (
                     <div style={{ display: "flex", gap: 8, alignItems: "flex-end", marginBottom: 12 }}>
                       <span style={s.aiAvatar}>◈</span>
-                      <div className="msg-ai" style={{ ...s.bubble, display: "flex", gap: 5, alignItems: "center" }}>
-                        {[0, 150, 300].map((d) => (
-                          <span key={d} style={{ width: 6, height: 6, borderRadius: "50%", background: "#00b4cc", display: "inline-block", animation: `pulse 1.2s ${d}ms infinite` }} />
-                        ))}
+                      <div className="msg-ai" style={s.bubble}>
+                        <div role="status" aria-live="polite">
+                          {progress.phase === "writing" ? "Writing your game…" : progress.phase === "thinking" ? "Designing your game…" : "Connecting to Sarvam…"}
+                        </div>
+                        <div style={{ fontSize: 11, opacity: 0.7, marginTop: 4 }}>
+                          {Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")} elapsed
+                          {progress.characters > 0 ? ` · ${progress.characters.toLocaleString()} characters written` : " · Detailed games can take a few minutes."}
+                        </div>
                       </div>
                     </div>
                   )}
@@ -314,6 +329,9 @@ export default function App() {
                 <div style={s.inputRow}>
                   <textarea
                     ref={inputRef}
+                    id="game-prompt"
+                    name="gamePrompt"
+                    aria-label="Game prompt"
                     style={s.input}
                     placeholder="Describe a game or ask for changes... (Shift+Enter for newline)"
                     value={input}
@@ -322,7 +340,11 @@ export default function App() {
                     disabled={loading}
                     rows={1}
                   />
-                  <button className="send-btn" style={{ ...s.sendBtn, opacity: loading || !input.trim() ? 0.4 : 1 }} onClick={sendMessage} disabled={loading || !input.trim()}>↑</button>
+                  {loading ? (
+                    <button className="icon-btn" style={s.runBtn} onClick={() => abortRef.current?.abort()} aria-label="Stop generation">Stop</button>
+                  ) : (
+                    <button className="send-btn" style={{ ...s.sendBtn, opacity: !input.trim() ? 0.4 : 1 }} onClick={sendMessage} disabled={!input.trim()} aria-label="Generate game">↑</button>
+                  )}
                 </div>
               </div>
             )}
@@ -347,6 +369,9 @@ export default function App() {
                     ))}
                   </div>
                   <CodeEditor
+                    id="game-code"
+                    name="gameCode"
+                    aria-label="Game HTML code"
                     value={code}
                     language="html"
                     onChange={(e) => handleCodeChange(e.target.value)}

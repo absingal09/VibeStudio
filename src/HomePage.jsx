@@ -144,7 +144,7 @@ const STEPS = [
   },
   {
     num: "02", icon: "✺", title: "Generate",
-    desc: "A full playable game appears in seconds — HTML, CSS & JS.",
+    desc: "AI designs your game and writes the HTML, CSS & JS.",
     detail: "Every game is self-contained, sandboxed, and immediately playable. No build step, no dependencies, no friction.",
   },
   {
@@ -155,8 +155,8 @@ const STEPS = [
 ];
 
 const STATS = [
-  { value: "< 10s", label: "generation time" },
-  { value: "4 K", label: "tokens per game" },
+  { value: "AI", label: "game generation" },
+  { value: "HTML5", label: "game output" },
   { value: "100%", label: "runs in-browser" },
   { value: "Free", label: "no signup needed" },
 ];
@@ -281,8 +281,6 @@ export default function HomePage({ onEnterStudio }) {
     const bw   = (W - (cols + 1) * gap) / cols;
     const bh   = 7;
     const blockAreaTop = 10;
-    const blockAreaH   = rows * (bh + gap);
-    const playAreaTop  = blockAreaTop + blockAreaH + 28;
     const COLORS = ["#00b4cc","#00e5ff","#4dd9e8","#00c8b4","#0090a8","#26d0e0","#00aabb","#00d4cc","#00c8e0","#0080a0","#00b0c8"];
 
     const makeBlocks = () => Array.from({ length: cols * rows }, (_, k) => {
@@ -519,7 +517,7 @@ export default function HomePage({ onEnterStudio }) {
       <section style={s.hero}>
         <div className="reveal" style={s.heroBadge}>
           <span style={s.badgeDot} />
-          <span style={s.badgeText}>Powered by Gemini 2.5 Pro · Groq · Llama 3.3</span>
+          <span style={s.badgeText}>Powered by Sarvam · GLM-5.3</span>
         </div>
 
         <div
@@ -586,7 +584,7 @@ export default function HomePage({ onEnterStudio }) {
         </div>
 
         <p className="reveal" style={{ ...s.heroSub, transitionDelay: "0.14s" }}>
-          VibeStudio turns plain words into fully playable browser games instantly.<br />
+          VibeStudio turns plain words into fully playable browser games.<br />
           No code required. No engine to learn. No setup.
         </p>
 
@@ -707,7 +705,7 @@ export default function HomePage({ onEnterStudio }) {
         <div className="reveal" style={s.sectionHead}>
           <span style={s.eyebrow}>Process</span>
           <h2 style={s.secTitle}>How It Works</h2>
-          <p style={s.secSub}>From idea to playable game in under 10 seconds.</p>
+          <p style={s.secSub}>From idea to playable game, with progress as it builds.</p>
         </div>
 
         <div style={s.stepsRow}>

@@ -1,90 +1,98 @@
-const GEMINI_KEYS = [
-  process.env.GEMINI_KEY_1,
-  process.env.GEMINI_KEY_2,
-  process.env.GEMINI_KEY_3,
-  process.env.GEMINI_KEY_4,
-  process.env.GEMINI_KEY_5,
-].filter(Boolean);
-
-const GROQ_KEYS = [
-  process.env.GROQ_KEY_1,
-  process.env.GROQ_KEY_2,
-  process.env.GROQ_KEY_3,
-].filter(Boolean);
-
 export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).end();
-
-  const { prompt, systemPrompt } = req.body;
-  if (!prompt) return res.status(400).json({ error: "Missing prompt" });
-
-  console.log("Keys loaded - Gemini:", GEMINI_KEYS.length, "Groq:", GROQ_KEYS.length);
-
-  let lastError = null;
-
-  if (GEMINI_KEYS.length > 0) {
-    const shuffled = [...GEMINI_KEYS].sort(() => Math.random() - 0.5);
-    for (let i = 0; i < shuffled.length; i++) {
-      try {
-        console.log("Trying Gemini key", i);
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${shuffled[i]}`;
-        const r = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            systemInstruction: { parts: [{ text: systemPrompt }] },
-            contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: { maxOutputTokens: 8192, temperature: 0.4 },
-          }),
-        });
-        console.log("Gemini key", i, "status:", r.status);
-        if (r.status === 429 || r.status === 503) { lastError = "Rate limited"; continue; }
-        const data = await r.json();
-        if (!r.ok) {
-          console.error("Gemini error:", data?.error?.message);
-          return res.status(r.status).json({ error: data?.error?.message });
-        }
-        return res.json({ text: data.candidates[0].content.parts[0].text });
-      } catch (e) {
-        console.error("Gemini key", i, "threw:", e.message);
-        lastError = e.message;
-      }
-    }
+  if (req.method !== "POST") {
+    res.setHeader("Allow", "POST");
+    return res.status(405).json({ error: "Method not allowed" });
   }
 
-  if (GROQ_KEYS.length > 0) {
-    const shuffled = [...GROQ_KEYS].sort(() => Math.random() - 0.5);
-    for (let i = 0; i < shuffled.length; i++) {
-      try {
-        console.log("Trying Groq key", i);
-        const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-          method: "POST",
-          headers: { Authorization: `Bearer ${shuffled[i]}`, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model: "llama-3.3-70b-versatile",
-            max_tokens: 4000,
-            temperature: 0.4,
-            messages: [
-              { role: "system", content: systemPrompt },
-              { role: "user", content: prompt },
-            ],
-          }),
-        });
-        console.log("Groq key", i, "status:", r.status);
-        if (r.status === 429) { lastError = "Rate limited"; continue; }
-        const data = await r.json();
-        if (!r.ok) {
-          console.error("Groq error:", data?.error?.message);
-          return res.status(r.status).json({ error: data?.error?.message });
-        }
-        return res.json({ text: data.choices[0].message.content });
-      } catch (e) {
-        console.error("Groq key", i, "threw:", e.message);
-        lastError = e.message;
-      }
-    }
+  const { prompt, systemPrompt, stream = false } = req.body ?? {};
+  if (typeof prompt !== "string" || !prompt.trim()) {
+    return res.status(400).json({ error: "Missing prompt" });
+  }
+  if (typeof systemPrompt !== "string" || !systemPrompt.trim()) {
+    return res.status(400).json({ error: "Missing game instructions" });
   }
 
-  console.error("All keys failed, lastError:", lastError);
-  res.status(500).json({ error: lastError || "No API keys configured" });
+  const apiKey = process.env.SARVAM_API_KEY?.trim();
+  if (!apiKey) {
+    return res.status(503).json({ error: "Sarvam API key is not configured." });
+  }
+
+  const controller = new AbortController();
+  const cancel = () => controller.abort();
+  res.on?.("close", cancel);
+  let streaming = false;
+  let heartbeat;
+
+  try {
+    const response = await fetch("https://api.sarvam.ai/v2/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "api-subscription-key": apiKey,
+      },
+      body: JSON.stringify({
+        model: "glm5.3",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: prompt },
+        ],
+        reasoning_effort: "high",
+        max_tokens: 32768,
+        temperature: 1,
+        stream: stream === true,
+      }),
+      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(240_000)]),
+    });
+
+    if (response.ok && stream === true && response.headers.get("content-type")?.includes("text/event-stream")) {
+      if (!response.body) throw new Error("Missing response stream");
+      res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+      res.setHeader("Cache-Control", "no-cache, no-transform");
+      res.setHeader("X-Accel-Buffering", "no");
+      streaming = true;
+      res.flushHeaders?.();
+      res.write(": connected\n\n");
+      heartbeat = setInterval(() => res.write(": heartbeat\n\n"), 10_000);
+      for await (const chunk of response.body) res.write(chunk);
+      return res.end();
+    }
+
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+      const message = data?.error?.message;
+      return res.status(response.status).json({
+        error: typeof message === "string" ? message : "Sarvam request failed (" + response.status + ").",
+      });
+    }
+
+    const choice = data?.choices?.[0];
+    if (choice?.finish_reason === "length") {
+      return res.status(502).json({
+        error: "Sarvam reached the generation limit before completing the game. Try a simpler game or a smaller change.",
+      });
+    }
+
+    const text = choice?.message?.content;
+    if (typeof text !== "string" || !text.trim()) {
+      return res.status(502).json({ error: "Sarvam returned no game code. Please try again." });
+    }
+
+    return res.json({ text });
+  } catch (error) {
+    if (controller.signal.aborted) return;
+    const timedOut = error.name === "TimeoutError" || error.name === "AbortError";
+    const failure = {
+      error: timedOut
+        ? "Sarvam took too long to respond. Please try again."
+        : "Unable to reach Sarvam. Please try again.",
+    };
+    if (streaming) {
+      res.write("data: " + JSON.stringify(failure) + "\n\n");
+      return res.end();
+    }
+    return res.status(timedOut ? 504 : 502).json(failure);
+  } finally {
+    clearInterval(heartbeat);
+    res.off?.("close", cancel);
+  }
 }

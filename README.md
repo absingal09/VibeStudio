@@ -23,7 +23,7 @@ Type a plain-English description of a game. VibeStudio uses Sarvam's API to gene
 - **Self-contained 3D exports** — the Three.js engine is bundled into previews and downloads; games need no CDN, external assets, or extra API key
 - **Fullscreen preview** — expand the game to fill the screen
 - **One AI integration** — GLM-5.3 through Sarvam's Chat Completion V2 API, using one server-side API key
-- **Interactive landing page** — animated hero, particle effects, parallax orbs, and a playable mini breakout demo
+- **Game-themed interface** — illustrated arcade and 3D worlds, a dark studio, accessible controls, and a compact Build / Play layout on smaller screens
 
 ---
 
@@ -35,7 +35,7 @@ Type a plain-English description of a game. VibeStudio uses Sarvam's API to gene
 | AI | Sarvam Chat Completion V2 — GLM-5.3 |
 | Code Editor | `@uiw/react-textarea-code-editor` |
 | 3D Runtime | Three.js 0.186.1 / WebGL2 |
-| Styling | Inline styles + CSS-in-JS (no external CSS framework) |
+| Styling | Shared CSS theme and responsive layouts (no external CSS framework) |
 | Deployment | Vercel |
 
 ---

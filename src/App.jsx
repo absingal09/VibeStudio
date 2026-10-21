@@ -1,11 +1,17 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import CodeEditor from "@uiw/react-textarea-code-editor";
 import Landing from "./Landing";
+import Icon, { Brand } from "./components/Icon";
+import GameArt from "./components/GameArt";
 import { fetchGame } from "./lib/ai";
-import { buildGenerationRequest, createWorkspace, getMode, hasGameCode } from "./lib/game-modes";
+import {
+  buildGenerationRequest,
+  createWorkspace,
+  getMode,
+  hasGameCode,
+} from "./lib/game-modes";
 import { buildPlayableDocument } from "./lib/preview";
 import threeStarter from "./templates/three-starter.html?raw";
-
 
 function extractHTML(text) {
   const match = text.match(/\x60\x60\x60(?:html)?\s*([\s\S]*?)\x60\x60\x60/i);
@@ -13,21 +19,39 @@ function extractHTML(text) {
 }
 
 export default function App() {
-  const initialMode = getMode(new URLSearchParams(window.location.search).get("mode")).id;
+  const initialMode = getMode(
+    new URLSearchParams(window.location.search).get("mode"),
+  ).id;
   const [mode, setMode] = useState(initialMode);
   const currentMode = getMode(mode);
   const [tab, setTab] = useState("chat");
-  const [showHome, setShowHome] = useState(() => !["2d", "3d"].includes(new URLSearchParams(window.location.search).get("mode")));
-  const [messages, setMessages] = useState(() => createWorkspace(initialMode, threeStarter).messages);
+  const [mobilePane, setMobilePane] = useState(
+    initialMode === "3d" ? "play" : "build",
+  );
+  const [exportError, setExportError] = useState("");
+  const [showHome, setShowHome] = useState(
+    () =>
+      !["2d", "3d"].includes(
+        new URLSearchParams(window.location.search).get("mode"),
+      ),
+  );
+  const [messages, setMessages] = useState(
+    () => createWorkspace(initialMode, threeStarter).messages,
+  );
   const [input, setInput] = useState("");
-  const [code, setCode] = useState(() => createWorkspace(initialMode, threeStarter).code);
+  const [code, setCode] = useState(
+    () => createWorkspace(initialMode, threeStarter).code,
+  );
   const [previewCode, setPreviewCode] = useState(code);
   const [threeRuntime, setThreeRuntime] = useState("");
   const [runtimeError, setRuntimeError] = useState("");
   const [runtimeAttempt, setRuntimeAttempt] = useState(0);
   const [previewError, setPreviewError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [progress, setProgress] = useState({ phase: "connecting", characters: 0 });
+  const [progress, setProgress] = useState({
+    phase: "connecting",
+    characters: 0,
+  });
   const [elapsed, setElapsed] = useState(0);
   const [previewKey, setPreviewKey] = useState(0);
   const [copied, setCopied] = useState(false);
@@ -40,23 +64,43 @@ export default function App() {
   const lineNumsRef = useRef(null);
   const iframeRef = useRef(null);
   const pendingPromptRef = useRef("");
-  const workspacesRef = useRef({ "2d": createWorkspace("2d"), "3d": createWorkspace("3d", threeStarter) });
+  const workspacesRef = useRef({
+    "2d": createWorkspace("2d"),
+    "3d": createWorkspace("3d", threeStarter),
+  });
+
+  useEffect(() => {
+    if (!fullscreen) return;
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") setFullscreen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [fullscreen]);
 
   useEffect(() => {
     if (mode !== "3d" || threeRuntime) return;
     let active = true;
-    import("./lib/three-runtime.js").then(({ default: runtime }) => {
-      if (active) setThreeRuntime(runtime);
-    }).catch(() => {
-      if (active) setRuntimeError("The 3D engine could not load. Please retry.");
-    });
-    return () => { active = false; };
+    import("./lib/three-runtime.js")
+      .then(({ default: runtime }) => {
+        if (active) setThreeRuntime(runtime);
+      })
+      .catch(() => {
+        if (active)
+          setRuntimeError("The 3D engine could not load. Please retry.");
+      });
+    return () => {
+      active = false;
+    };
   }, [mode, threeRuntime, runtimeAttempt]);
 
   useEffect(() => {
     const onMessage = (event) => {
       if (event.source !== iframeRef.current?.contentWindow) return;
-      if (event.data?.type === "vibestudio-preview-error" && typeof event.data.message === "string") {
+      if (
+        event.data?.type === "vibestudio-preview-error" &&
+        typeof event.data.message === "string"
+      ) {
         setPreviewError(event.data.message.slice(0, 400));
       }
     };
@@ -64,12 +108,22 @@ export default function App() {
     return () => window.removeEventListener("message", onMessage);
   }, []);
 
-  const previewDocument = useMemo(() => mode === "3d" && !threeRuntime ? "" : buildPlayableDocument(previewCode, mode, threeRuntime), [previewCode, mode, threeRuntime]);
+  const previewDocument = useMemo(
+    () =>
+      mode === "3d" && !threeRuntime
+        ? ""
+        : buildPlayableDocument(previewCode, mode, threeRuntime),
+    [previewCode, mode, threeRuntime],
+  );
 
   const enterStudio = (requestedMode = "2d") => {
     const nextMode = getMode(requestedMode).id;
     if (nextMode !== mode) {
-      workspacesRef.current[mode] = { code, messages, input: input || (loading ? pendingPromptRef.current : "") };
+      workspacesRef.current[mode] = {
+        code,
+        messages,
+        input: input || (loading ? pendingPromptRef.current : ""),
+      };
       const controller = abortRef.current;
       abortRef.current = null;
       controller?.abort();
@@ -86,6 +140,8 @@ export default function App() {
       setPreviewError("");
       setPreviewKey((key) => key + 1);
     }
+    setMobilePane(nextMode === "3d" ? "play" : "build");
+    setExportError("");
     setShowHome(false);
     const url = new URL(window.location.href);
     url.searchParams.set("mode", nextMode);
@@ -108,7 +164,12 @@ export default function App() {
   };
 
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (messages.length <= 1 || tab !== "chat") return;
+    chatEndRef.current?.scrollIntoView({
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "instant"
+        : "smooth",
+    });
   }, [messages, tab]);
 
   useEffect(() => {
@@ -121,10 +182,12 @@ export default function App() {
   useEffect(() => {
     if (!loading) return;
     const startedAt = Date.now();
-    const timer = setInterval(() => setElapsed(Math.floor((Date.now() - startedAt) / 1000)), 1000);
+    const timer = setInterval(
+      () => setElapsed(Math.floor((Date.now() - startedAt) / 1000)),
+      1000,
+    );
     return () => clearInterval(timer);
   }, [loading]);
-
 
   useEffect(() => {
     if (tab !== "code") return;
@@ -137,10 +200,16 @@ export default function App() {
         if (!container) return;
         const lineHeight = 12 * 1.7;
         const padding = 14;
-        const currentLine = textarea.value.substring(0, textarea.selectionStart).split("\n").length - 1;
+        const currentLine =
+          textarea.value.substring(0, textarea.selectionStart).split("\n")
+            .length - 1;
         const cursorY = currentLine * lineHeight + padding;
-        if (cursorY + lineHeight > container.scrollTop + container.clientHeight) {
-          container.scrollTop = cursorY + lineHeight - container.clientHeight + padding;
+        if (
+          cursorY + lineHeight >
+          container.scrollTop + container.clientHeight
+        ) {
+          container.scrollTop =
+            cursorY + lineHeight - container.clientHeight + padding;
         } else if (cursorY < container.scrollTop + padding) {
           container.scrollTop = cursorY - padding;
         }
@@ -170,7 +239,7 @@ export default function App() {
     if (!userText || loading) return;
 
     setInput("");
-    if (inputRef.current) inputRef.current.style.height = "38px";
+    if (inputRef.current) inputRef.current.style.height = "88px";
 
     const isRefine = hasGameCode(code);
     pendingPromptRef.current = userText;
@@ -183,7 +252,11 @@ export default function App() {
     const controller = new AbortController();
     abortRef.current = controller;
 
-    const { prompt, systemPrompt } = buildGenerationRequest(mode, userText, code);
+    const { prompt, systemPrompt } = buildGenerationRequest(
+      mode,
+      userText,
+      code,
+    );
 
     try {
       const text = await fetchGame(prompt, {
@@ -193,21 +266,31 @@ export default function App() {
       });
       if (abortRef.current !== controller) return;
       const html = extractHTML(text);
+      setMobilePane("play");
       setCode(html);
       setPreviewCode(html);
       setPreviewError("");
       setPreviewKey((k) => k + 1);
-      setMessages((prev) => [...prev, {
-        role: "assistant",
-        content: isRefine
-          ? "Done! Changes applied. Switch to Code tab to edit further."
-          : "Game ready! Check the preview on the right. Switch to the Code tab to edit it live.",
-      }]);
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: isRefine
+            ? "Your changes are ready. Give it a play, or keep making it yours."
+            : "Your game is ready! Jump into the preview and try it out.",
+        },
+      ]);
     } catch (err) {
       if (abortRef.current !== controller) return;
-      setMessages((prev) => [...prev, { role: "assistant", content: controller.signal.aborted
-        ? "Generation stopped. Edit your prompt and try again whenever you're ready."
-        : err.message || "Something went wrong. Please try again." }]);
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: controller.signal.aborted
+            ? "Generation stopped. Edit your prompt and try again whenever you're ready."
+            : err.message || "Something went wrong. Please try again.",
+        },
+      ]);
       setInput((current) => current || userText);
     } finally {
       if (abortRef.current === controller) {
@@ -218,7 +301,10 @@ export default function App() {
   };
 
   const handleKey = (e) => {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
   };
 
   const handleInputChange = (e) => {
@@ -227,14 +313,24 @@ export default function App() {
     e.target.style.height = Math.min(e.target.scrollHeight, 120) + "px";
   };
 
-  const copyCode = () => {
-    navigator.clipboard.writeText(buildPlayableDocument(code, mode, threeRuntime));
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const copyCode = async () => {
+    try {
+      await navigator.clipboard.writeText(
+        buildPlayableDocument(code, mode, threeRuntime),
+      );
+      setExportError("");
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setExportError(
+        "Couldn’t copy your game. Use Download to save it instead.",
+      );
+    }
   };
-
   const downloadCode = () => {
-    const blob = new Blob([buildPlayableDocument(code, mode, threeRuntime)], { type: "text/html" });
+    const blob = new Blob([buildPlayableDocument(code, mode, threeRuntime)], {
+      type: "text/html",
+    });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -249,242 +345,483 @@ export default function App() {
   if (showHome) return <Landing onEnterStudio={enterStudio} />;
 
   return (
-    <div style={s.root}>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { overflow: hidden; }
-        ::-webkit-scrollbar { width: 5px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: rgba(0,200,200,0.2); border-radius: 4px; }
-        textarea:focus, input:focus { outline: none; }
-        .w-tc-editor { overflow: visible !important; }
-        .w-tc-editor textarea { caret-color: #00e5ff !important; overflow: hidden !important; }
-        .tab-btn { cursor:pointer; border:none; background:transparent; font-family:'DM Sans',sans-serif; font-size:13px; font-weight:600; padding:11px 22px; transition:all 0.2s; color:rgba(0,100,120,0.5); border-bottom: 2px solid transparent; letter-spacing:0.2px; }
-        .tab-btn:hover { color: #00b4cc; }
-        .tab-active { color: #007a8a !important; border-bottom: 2px solid #00b4cc !important; }
-        .send-btn:hover { transform: scale(1.05); }
-        .icon-btn:hover { background: rgba(0,180,204,0.2) !important; color: #007a8a !important; border-color: rgba(0,180,204,0.4) !important; }
-        .suggestion:hover { background: rgba(0,200,220,0.12) !important; color: #007a8a !important; border-color: rgba(0,180,204,0.4) !important; }
-        .msg-user { background: rgba(0,180,204,0.12); border: 1px solid rgba(0,180,204,0.25); border-radius: 14px 14px 4px 14px; backdrop-filter: blur(8px); }
-        .msg-ai { background: rgba(255,255,255,0.5); border: 1px solid rgba(0,180,204,0.15); border-radius: 14px 14px 14px 4px; backdrop-filter: blur(8px); }
-        @keyframes pulse { 0%,100%{opacity:0.4;transform:scale(1);}50%{opacity:1;transform:scale(1.3);} }
-        @keyframes livePulse { 0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(0,200,160,0.5);}50%{opacity:0.7;box-shadow:0 0 0 4px rgba(0,200,160,0);} }
-        @keyframes fadeIn { from{opacity:0;transform:translateY(5px);}to{opacity:1;transform:translateY(0);} }
-        @keyframes spin { from{transform:rotate(0deg);}to{transform:rotate(360deg);} }
-      `}</style>
-
-      <div style={s.bgGradient} />
-      <div style={s.bgOrb1} />
-      <div style={s.bgOrb2} />
-      <div style={s.bgOrb3} />
-
-      {/* NAV */}
-      <div style={s.nav}>
-        <div style={s.navLeft}>
-          <button className="icon-btn" style={{ ...s.navBtn, fontSize: 12, marginRight: 4 }} onClick={goHome} title="Back to home">← Home</button>
-          <span style={s.navLogo}>◈</span>
-          <span style={s.navName}>VibeStudio</span>
-          <span style={s.navTag}>{currentMode.label}</span>
-          <div role="group" aria-label="Game dimension" style={{ display: "flex", gap: 4 }}>
-            {["2d", "3d"].map((dimension) => <button key={dimension} className="icon-btn" style={{ ...s.navBtn, background: mode === dimension ? "rgba(0,180,204,0.2)" : "transparent" }} aria-pressed={mode === dimension} onClick={() => enterStudio(dimension)}>{dimension.toUpperCase()}</button>)}
-          </div>
+    <div className={`studio ${fullscreen ? "studio-expanded" : ""}`}>
+      <a className="skip-link" href="#studio-workspace">
+        Skip to workspace
+      </a>
+      <header className="studio-nav">
+        <button
+          className="brand-button"
+          onClick={goHome}
+          aria-label="Back to VibeStudio home"
+        >
+          <Brand />
+        </button>
+        <div
+          className="dimension-switch"
+          role="group"
+          aria-label="Game dimension"
+        >
+          {["2d", "3d"].map((dimension) => (
+            <button
+              key={dimension}
+              aria-pressed={mode === dimension}
+              onClick={() => enterStudio(dimension)}
+            >
+              <Icon
+                name={dimension === "3d" ? "cube" : "controller"}
+                size={16}
+              />
+              {dimension.toUpperCase()}
+              <span className="dimension-name">
+                {dimension === "3d" ? "Sandbox" : "Arcade"}
+              </span>
+            </button>
+          ))}
         </div>
-        <div style={s.navRight}>
-          {hasGame && (
+        <div className="studio-nav-actions">
+          {hasGame ? (
             <>
-              <button className="icon-btn" style={s.navBtn} onClick={copyCode} disabled={!engineReady} title="Copy self-contained HTML to clipboard">
-                {copied ? "✓ Copied" : "⎘ Copy"}
+              <button
+                className="button button-small button-quiet copy-action"
+                onClick={copyCode}
+                disabled={!engineReady}
+              >
+                <Icon name={copied ? "check" : "copy"} size={16} />
+                {copied ? "Copied" : "Copy"}
               </button>
-              <button className="icon-btn" style={s.navBtn} onClick={downloadCode} disabled={!engineReady} title="Download as self-contained HTML file">
-                ↓ Download
+              <button
+                className="button button-small button-primary"
+                onClick={downloadCode}
+                disabled={!engineReady}
+                aria-label="Download game"
+              >
+                <Icon name="download" size={16} />
+                <span>Download game</span>
               </button>
             </>
+          ) : (
+            <span className="studio-nav-hint">
+              Good ideas deserve a play button.
+            </span>
           )}
-          <span style={s.navHint}>Generate · Edit · Play · Learn</span>
         </div>
+      </header>
+
+      <div className="mobile-pane-switch" role="group" aria-label="Studio view">
+        <button
+          aria-pressed={mobilePane === "build"}
+          onClick={() => setMobilePane("build")}
+        >
+          <Icon name="spark" size={16} /> Build
+        </button>
+        <button
+          aria-pressed={mobilePane === "play"}
+          onClick={() => setMobilePane("play")}
+        >
+          <Icon name="play" size={16} /> Play
+        </button>
+      </div>
+      {exportError && (
+        <div className="studio-alert" role="alert">
+          {exportError}
+        </div>
+      )}
+      <div role="status" className="sr-only">
+        {copied ? "Game HTML copied to clipboard." : ""}
       </div>
 
-      {/* MAIN */}
-      <div style={s.main}>
-
-        {/* LEFT PANEL */}
-        {!fullscreen && (
-          <div style={s.left}>
-            <div style={s.tabBar}>
-              <button className={`tab-btn ${tab === "chat" ? "tab-active" : ""}`} onClick={() => setTab("chat")}>💬 Chat</button>
-              <button className={`tab-btn ${tab === "code" ? "tab-active" : ""}`} onClick={() => setTab("code")}>{"</>"} Code</button>
+      <main id="studio-workspace" className="studio-main">
+        <section
+          className="builder-panel"
+          data-active={mobilePane === "build"}
+          aria-label="Game builder"
+        >
+          <div className="builder-header">
+            <div className="builder-heading">
+              <span className="small-mode-mark">
+                <Icon name={mode === "3d" ? "cube" : "controller"} size={20} />
+              </span>
+              <div>
+                <h1>{mode === "3d" ? "3D sandbox" : "Arcade builder"}</h1>
+                <p>Your idea. Your rules.</p>
+              </div>
             </div>
+            <span className="session-tag">{mode.toUpperCase()}</span>
+          </div>
+          <div className="builder-tabs" role="tablist" aria-label="Build tools">
+            {[
+              ["chat", "spark", "Create"],
+              ["code", "code", "Code"],
+            ].map(([id, icon, label]) => (
+              <button
+                key={id}
+                id={`${id}-tab`}
+                role="tab"
+                aria-selected={tab === id}
+                aria-controls={`${id}-panel`}
+                tabIndex={tab === id ? 0 : -1}
+                onClick={() => setTab(id)}
+                onKeyDown={(event) => {
+                  if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+                    event.preventDefault();
+                    const nextTab = id === "chat" ? "code" : "chat";
+                    setTab(nextTab);
+                    document.getElementById(`${nextTab}-tab`)?.focus();
+                  }
+                }}
+              >
+                <Icon name={icon} size={16} />
+                {label}
+              </button>
+            ))}
+          </div>
 
-            {/* CHAT TAB */}
-            {tab === "chat" && (
-              <div style={s.tabContent}>
-                <div style={s.chatScroll}>
-                  {messages.map((m, i) => (
-                    <div key={i} style={{ animation: "fadeIn 0.25s ease", marginBottom: 12, display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start", gap: 8, alignItems: "flex-end" }}>
-                      {m.role === "assistant" && <span style={s.aiAvatar}>◈</span>}
-                      <div className={m.role === "user" ? "msg-user" : "msg-ai"} style={s.bubble}>{m.content}</div>
+          {tab === "chat" && (
+            <div
+              className="builder-content"
+              id="chat-panel"
+              role="tabpanel"
+              aria-labelledby="chat-tab"
+            >
+              <div className="chat-scroll">
+                {messages.length <= 1 && (
+                  <div className="chat-intro">
+                    <span className="intro-icon">
+                      <Icon name="spark" size={29} />
+                    </span>
+                    <h2>
+                      {mode === "3d"
+                        ? "A whole world of what-ifs."
+                        : "What are we playing?"}
+                    </h2>
+                    <p>
+                      {mode === "3d"
+                        ? "The island is just the beginning. Where do we go next?"
+                        : "Start with a wild idea. We’ll find the fun."}
+                    </p>
+                  </div>
+                )}
+                <div
+                  className="messages"
+                  aria-label="Game conversation"
+                  aria-live="polite"
+                  aria-relevant="additions"
+                >
+                  {messages.slice(1).map((message, index) => (
+                    <div
+                      key={index}
+                      className={`message message-${message.role}`}
+                    >
+                      <div className="message-author">
+                        {message.role === "assistant" ? (
+                          <>
+                            <span className="assistant-mark">
+                              <Icon name="spark" size={12} />
+                            </span>
+                            VibeStudio
+                          </>
+                        ) : (
+                          "You"
+                        )}
+                      </div>
+                      <div className="message-bubble">{message.content}</div>
                     </div>
                   ))}
                   {loading && (
-                    <div style={{ display: "flex", gap: 8, alignItems: "flex-end", marginBottom: 12 }}>
-                      <span style={s.aiAvatar}>◈</span>
-                      <div className="msg-ai" style={s.bubble}>
-                        <div role="status" aria-live="polite">
-                          {progress.phase === "writing" ? "Writing your game…" : progress.phase === "thinking" ? "Designing your game…" : "Connecting to Sarvam…"}
+                    <div className="message message-assistant">
+                      <div className="message-author">
+                        <span className="assistant-mark">
+                          <Icon name="spark" size={12} />
+                        </span>
+                        VibeStudio
+                      </div>
+                      <div
+                        className="message-bubble generation-status"
+                        role="status"
+                      >
+                        <div>
+                          <span className="loading-spinner" />
+                          {progress.phase === "writing"
+                            ? "Building your game…"
+                            : progress.phase === "thinking"
+                              ? "Dreaming up your world…"
+                              : "Getting things ready…"}
                         </div>
-                        <div style={{ fontSize: 11, opacity: 0.7, marginTop: 4 }}>
-                          {Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")} elapsed
-                          {progress.characters > 0 ? ` · ${progress.characters.toLocaleString()} characters written` : " · Detailed games can take a few minutes."}
-                        </div>
+                        <p>
+                          {Math.floor(elapsed / 60)}:
+                          {String(elapsed % 60).padStart(2, "0")} elapsed
+                          {progress.characters > 0
+                            ? ` · ${progress.characters.toLocaleString()} characters written`
+                            : " · Great worlds take a little time."}
+                        </p>
                       </div>
                     </div>
                   )}
-                  <div ref={chatEndRef} />
                 </div>
-
-                {messages.length <= 1 && (
-                  <div style={s.suggestionsWrap}>
-                    <span style={s.suggestLabel}>Try these:</span>
-                    <div style={s.suggestions}>
-                      {currentMode.suggestions.map((sg) => (
-                        <button key={sg} className="suggestion" style={s.suggestion} onClick={() => { setInput(sg); inputRef.current?.focus(); }}>{sg} →</button>
-                      ))}
-                    </div>
+                <div ref={chatEndRef} />
+              </div>
+              {messages.length <= 1 && (
+                <div className="suggestions-wrap">
+                  <p>Need a starting point?</p>
+                  <div className="suggestion-grid">
+                    {currentMode.suggestions.map((suggestion) => (
+                      <button
+                        key={suggestion}
+                        onClick={() => {
+                          setInput(suggestion);
+                          inputRef.current?.focus();
+                        }}
+                      >
+                        <span>{suggestion}</span>
+                        <Icon name="arrow" size={14} />
+                      </button>
+                    ))}
                   </div>
-                )}
-
-                <div style={s.inputRow}>
+                </div>
+              )}
+              <form
+                className="prompt-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  sendMessage();
+                }}
+              >
+                <div className="prompt-box">
+                  <label className="sr-only" htmlFor="game-prompt">
+                    Game prompt
+                  </label>
                   <textarea
                     ref={inputRef}
                     id="game-prompt"
                     name="gamePrompt"
-                    aria-label="Game prompt"
-                    style={s.input}
-                    placeholder="Describe a game or ask for changes... (Shift+Enter for newline)"
+                    autoComplete="off"
+                    placeholder={
+                      mode === "3d"
+                        ? "What should we add to this world?"
+                        : "A space runner where gravity keeps changing…"
+                    }
                     value={input}
                     onChange={handleInputChange}
                     onKeyDown={handleKey}
                     disabled={loading}
-                    rows={1}
+                    rows={3}
                   />
-                  {loading ? (
-                    <button className="icon-btn" style={s.runBtn} onClick={() => abortRef.current?.abort()} aria-label="Stop generation">Stop</button>
-                  ) : (
-                    <button className="send-btn" style={{ ...s.sendBtn, opacity: !input.trim() ? 0.4 : 1 }} onClick={sendMessage} disabled={!input.trim()} aria-label="Generate game">↑</button>
-                  )}
+                  <div className="prompt-actions">
+                    <span>
+                      <kbd>↵</kbd> to build{" "}
+                      <span className="prompt-newline">
+                        · Shift + Enter for a new line
+                      </span>
+                    </span>
+                    {loading ? (
+                      <button
+                        type="button"
+                        className="prompt-submit stop-button"
+                        onClick={() => abortRef.current?.abort()}
+                        aria-label="Stop generation"
+                      >
+                        <Icon name="stop" size={15} />
+                        Stop
+                      </button>
+                    ) : (
+                      <button
+                        type="submit"
+                        className="prompt-submit"
+                        disabled={!input.trim()}
+                        aria-label="Generate game"
+                      >
+                        <Icon name="spark" size={15} />
+                        {hasGame ? "Remix" : "Build"}
+                        <Icon name="arrow" size={15} />
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
-            )}
+                <p className="prompt-note">
+                  {mode === "3d"
+                    ? "Keep exploring while your next idea takes shape."
+                    : "Build something. Break something. Find the fun."}
+                </p>
+              </form>
+            </div>
+          )}
 
-            {/* CODE TAB */}
-            {tab === "code" && (
-              <div style={s.tabContent}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 16px", borderBottom: "1px solid rgba(0,180,204,0.12)", flexShrink: 0 }}>
-                  <span style={{ fontSize: 10, fontFamily: "'JetBrains Mono',monospace", color: "rgba(0,120,140,0.45)" }}>
+          {tab === "code" && (
+            <div
+              className="builder-content code-content"
+              id="code-panel"
+              role="tabpanel"
+              aria-labelledby="code-tab"
+            >
+              <div className="code-toolbar">
+                <span>
+                  game-{mode}.html{" "}
+                  <span className="line-count">
                     {code.split("\n").length} lines
                   </span>
-                  <div style={{ display: "flex", gap: 6 }}>
-                    <button className="icon-btn" style={s.runBtn} onClick={copyCode} disabled={!engineReady}>{copied ? "✓ Copied" : "⎘ Copy"}</button>
-                    <button className="icon-btn" style={s.runBtn} onClick={downloadCode} disabled={!engineReady}>↓ Download</button>
-                    <button className="icon-btn" style={{ ...s.runBtn, borderColor: "rgba(0,180,204,0.4)", color: "#00a0b0" }} onClick={runPreview}>▶ Run</button>
-                  </div>
-                </div>
-                <div ref={editorWrapRef} style={{ display: "flex", flex: 1, overflow: "auto", margin: 10, borderRadius: 8, background: "rgba(0,40,50,0.78)", alignItems: "flex-start" }}>
-                  <div ref={lineNumsRef} style={{ ...s.lineNums, position: "sticky", left: 0 }}>
-                    {code.split("\n").map((_, i) => (
-                      <div key={i}>{i + 1}</div>
-                    ))}
-                  </div>
-                  <CodeEditor
-                    id="game-code"
-                    name="gameCode"
-                    aria-label="Game HTML code"
-                    value={code}
-                    language="html"
-                    onChange={(e) => handleCodeChange(e.target.value)}
-                    padding={14}
-                    style={{
-                      flex: 1,
-                      fontSize: 12,
-                      fontFamily: "'JetBrains Mono', monospace",
-                      lineHeight: 1.7,
-                      background: "transparent",
-                      minWidth: 0,
-                    }}
-                  />
-                </div>
+                </span>
+                <button
+                  className="button button-small button-outline"
+                  onClick={runPreview}
+                >
+                  <Icon name="play" size={13} />
+                  Run
+                </button>
               </div>
-            )}
-          </div>
-        )}
+              <div
+                className="editor-wrap"
+                ref={editorWrapRef}
+                data-color-mode="dark"
+              >
+                <div
+                  className="line-numbers"
+                  ref={lineNumsRef}
+                  aria-hidden="true"
+                >
+                  {code.split("\n").map((_, index) => (
+                    <div key={index}>{index + 1}</div>
+                  ))}
+                </div>
+                <CodeEditor
+                  id="game-code"
+                  name="gameCode"
+                  aria-label="Game HTML code"
+                  value={code}
+                  language="html"
+                  spellCheck={false}
+                  autoComplete="off"
+                  onChange={(event) => handleCodeChange(event.target.value)}
+                  padding={14}
+                  style={{
+                    flex: 1,
+                    fontSize: 12,
+                    fontFamily: "'JetBrains Mono', monospace",
+                    lineHeight: 1.7,
+                    background: "transparent",
+                    minWidth: 0,
+                  }}
+                />
+              </div>
+              <p className="code-note">
+                <span className="status-dot" /> Changes update the preview
+                automatically.
+              </p>
+            </div>
+          )}
+        </section>
 
-        {!fullscreen && <div style={s.divider} />}
-
-        {/* RIGHT — LIVE PREVIEW */}
-        <div style={{ ...s.right, ...(fullscreen ? { width: "100%" } : {}) }}>
-          <div style={s.previewHeader}>
-            <span style={s.liveDot} />
-            <span style={s.previewLabel}>LIVE PREVIEW</span>
-            <div style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
-              {!fullscreen && <span style={s.previewHint}>auto-updates as you edit</span>}
-              <button className="icon-btn" style={s.previewBtn} onClick={runPreview} title="Refresh preview">↺</button>
-              <button className="icon-btn" style={s.previewBtn} onClick={() => setFullscreen((f) => !f)} title={fullscreen ? "Exit fullscreen" : "Expand preview"}>
-                {fullscreen ? "⊠ Exit" : "⊡ Expand"}
+        <section
+          className="preview-panel"
+          data-active={mobilePane === "play"}
+          aria-label="Game preview"
+        >
+          <div className="preview-toolbar">
+            <div>
+              <span className="status-dot" />
+              <h2>Playground</h2>
+              <span className="preview-mode-tag">{mode.toUpperCase()}</span>
+            </div>
+            <div className="preview-actions">
+              <button
+                className="icon-button"
+                onClick={runPreview}
+                aria-label="Restart preview"
+                title="Restart preview"
+              >
+                <Icon name="refresh" size={17} />
+              </button>
+              <button
+                className="icon-button"
+                onClick={() => setFullscreen((value) => !value)}
+                aria-label={fullscreen ? "Restore layout" : "Expand preview"}
+                title={fullscreen ? "Restore layout" : "Expand preview"}
+              >
+                <Icon name={fullscreen ? "close" : "expand"} size={17} />
               </button>
             </div>
           </div>
-          {previewError && <div role="alert" style={{ padding: "10px 16px", color: "#9d2339", background: "#fff1f3", fontSize: 12 }}>Preview error: {previewError} — edit the code or ask for a fix, then run again.</div>}
-          {engineReady ? (
-            <iframe ref={iframeRef} key={previewKey} srcDoc={previewDocument} style={s.iframe} sandbox="allow-scripts" title={mode === "3d" ? "3D Game Preview" : "Game Preview"} />
-          ) : (
-            <div role="status" style={{ ...s.iframe, display: "grid", placeContent: "center", textAlign: "center", gap: 12, padding: 24 }}>
-              <p>{runtimeError || "Preparing your 3D sandbox…"}</p>
-              {runtimeError && <button style={s.runBtn} onClick={() => { setRuntimeError(""); setRuntimeAttempt((attempt) => attempt + 1); }}>Retry 3D engine</button>}
+          {previewError && (
+            <div role="alert" className="studio-alert">
+              Preview error: {previewError}. Edit the code or ask for a fix,
+              then run again.
             </div>
           )}
-        </div>
-      </div>
+          <div className={`preview-stage ${!hasGame ? "stage-empty" : ""}`}>
+            {!hasGame ? (
+              <div className="empty-playground">
+                <GameArt mode="2d" />
+                <h2>Your next game starts here.</h2>
+                <p>
+                  Give your imagination a play button.
+                  <br />
+                  Describe a game to bring it to life.
+                </p>
+                <button
+                  className="button button-outline mobile-create-button"
+                  onClick={() => setMobilePane("build")}
+                >
+                  <Icon name="spark" size={16} />
+                  Create a game
+                </button>
+              </div>
+            ) : engineReady ? (
+              <iframe
+                ref={iframeRef}
+                key={previewKey}
+                srcDoc={previewDocument}
+                sandbox="allow-scripts"
+                title={mode === "3d" ? "3D Game Preview" : "Game Preview"}
+              />
+            ) : (
+              <div role="status" className="engine-loading">
+                <span className="loading-spinner" />
+                <h2>
+                  {runtimeError
+                    ? "Let’s try that again."
+                    : "Opening a new dimension…"}
+                </h2>
+                <p>{runtimeError || "Your 3D playground is getting ready."}</p>
+                {runtimeError && (
+                  <button
+                    className="button button-outline"
+                    onClick={() => {
+                      setRuntimeError("");
+                      setRuntimeAttempt((attempt) => attempt + 1);
+                    }}
+                  >
+                    Retry 3D engine
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+          <div className="preview-footer">
+            <span>
+              <Icon name={mode === "3d" ? "cube" : "controller"} size={15} />
+              {hasGame
+                ? "Click inside to play"
+                : "Waiting for your imagination"}
+            </span>
+            <span>
+              {mode === "3d"
+                ? "WASD / arrows · Drag to look"
+                : hasGame
+                  ? "Your game. Your rules."
+                  : "Made to be played."}
+            </span>
+          </div>
+        </section>
+      </main>
+      <footer className="studio-statusbar">
+        <span>
+          <span className="status-dot" />
+          {loading
+            ? "Building your next adventure"
+            : "All systems ready for play"}
+        </span>
+        <span>Made of ideas. Powered by Sarvam.</span>
+      </footer>
     </div>
   );
 }
-
-const s = {
-  root: { display: "flex", flexDirection: "column", height: "100vh", width: "100vw", fontFamily: "'DM Sans',sans-serif", color: "#004d5c", overflow: "hidden", position: "relative" },
-  bgGradient: { position: "fixed", inset: 0, background: "linear-gradient(135deg, #b2f0f0 0%, #d0fafa 40%, #c8f4f9 70%, #a8eeee 100%)", zIndex: 0 },
-  bgOrb1: { position: "fixed", top: "-120px", left: "-100px", width: "500px", height: "500px", borderRadius: "50%", background: "radial-gradient(circle, rgba(0,210,220,0.4) 0%, transparent 70%)", zIndex: 0, pointerEvents: "none" },
-  bgOrb2: { position: "fixed", bottom: "-150px", right: "-100px", width: "600px", height: "600px", borderRadius: "50%", background: "radial-gradient(circle, rgba(0,180,200,0.13) 0%, transparent 70%)", zIndex: 0, pointerEvents: "none" },
-  bgOrb3: { position: "fixed", top: "40%", left: "45%", width: "400px", height: "400px", borderRadius: "50%", background: "radial-gradient(circle, rgba(100,240,240,0.08) 0%, transparent 70%)", zIndex: 0, pointerEvents: "none" },
-  nav: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px", height: "46px", background: "rgba(255,255,255,0.4)", backdropFilter: "blur(20px)", borderBottom: "1px solid rgba(0,180,204,0.18)", flexShrink: 0, position: "relative", zIndex: 10 },
-  navLeft: { display: "flex", alignItems: "center", gap: 10 },
-  navRight: { display: "flex", alignItems: "center", gap: 8 },
-  navLogo: { fontSize: 18, color: "#00b4cc" },
-  navName: { fontSize: 15, fontWeight: 700, color: "#005f6e", letterSpacing: "-0.3px" },
-  navTag: { fontSize: 11, color: "#00a0b0", fontFamily: "'JetBrains Mono',monospace", background: "rgba(0,180,204,0.1)", border: "1px solid rgba(0,180,204,0.25)", padding: "2px 8px", borderRadius: 20 },
-  navBtn: { fontSize: 11, fontFamily: "'JetBrains Mono',monospace", background: "rgba(0,180,204,0.08)", border: "1px solid rgba(0,180,204,0.2)", color: "#007a8a", padding: "4px 10px", borderRadius: 6, cursor: "pointer", transition: "all 0.15s" },
-  navHint: { fontSize: 11, color: "rgba(0,150,170,0.35)", fontFamily: "'JetBrains Mono',monospace", letterSpacing: 1 },
-  main: { display: "flex", flex: 1, overflow: "hidden", position: "relative", zIndex: 1 },
-  left: { width: "50%", display: "flex", flexDirection: "column", overflow: "hidden", background: "rgba(255,255,255,0.35)", backdropFilter: "blur(20px)", borderRight: "1px solid rgba(0,180,204,0.15)" },
-  tabBar: { display: "flex", borderBottom: "1px solid rgba(0,180,204,0.15)", background: "rgba(255,255,255,0.4)", flexShrink: 0 },
-  tabContent: { display: "flex", flexDirection: "column", flex: 1, overflow: "hidden" },
-  chatScroll: { flex: 1, overflowY: "auto", padding: "16px" },
-  aiAvatar: { fontSize: 12, color: "#00b4cc", flexShrink: 0, marginBottom: 4, lineHeight: 1 },
-  bubble: { padding: "10px 14px", fontSize: 13, lineHeight: 1.6, maxWidth: "85%", color: "#004d5c" },
-  suggestionsWrap: { padding: "0 16px 10px", flexShrink: 0 },
-  suggestLabel: { fontSize: 10, color: "rgba(0,120,140,0.45)", fontFamily: "'JetBrains Mono',monospace", display: "block", marginBottom: 6 },
-  suggestions: { display: "flex", flexWrap: "wrap", gap: 6 },
-  suggestion: { background: "rgba(0,180,204,0.07)", border: "1px solid rgba(0,180,204,0.2)", borderRadius: 20, color: "#007a8a", fontSize: 11, padding: "5px 12px", cursor: "pointer", fontFamily: "'DM Sans',sans-serif", transition: "all 0.15s" },
-  inputRow: { display: "flex", gap: 8, padding: "10px 16px", borderTop: "1px solid rgba(0,180,204,0.12)", alignItems: "flex-end", flexShrink: 0, background: "rgba(255,255,255,0.3)" },
-  input: { flex: 1, background: "rgba(255,255,255,0.6)", border: "1px solid rgba(0,180,204,0.25)", borderRadius: 10, color: "#004d5c", fontSize: 13, padding: "9px 14px", fontFamily: "'DM Sans',sans-serif", resize: "none", minHeight: 38, maxHeight: 120, lineHeight: 1.55, overflowY: "auto" },
-  sendBtn: { width: 34, height: 34, borderRadius: 8, background: "linear-gradient(135deg, #00b4cc, #0090a8)", border: "none", color: "white", fontSize: 15, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "transform 0.15s", boxShadow: "0 2px 12px rgba(0,180,204,0.35)" },
-  runBtn: { fontSize: 11, fontFamily: "'JetBrains Mono',monospace", background: "rgba(0,180,204,0.1)", border: "1px solid rgba(0,180,204,0.3)", color: "#007a8a", padding: "4px 12px", borderRadius: 6, cursor: "pointer", transition: "all 0.15s" },
-  lineNums: { paddingTop: 14, paddingBottom: 14, paddingLeft: 10, paddingRight: 10, textAlign: "right", color: "rgba(100,200,220,0.25)", fontSize: 12, fontFamily: "'JetBrains Mono', monospace", lineHeight: 1.7, userSelect: "none", minWidth: 44, borderRight: "1px solid rgba(0,180,204,0.08)", overflowY: "hidden", flexShrink: 0 },
-  divider: { width: 1, background: "rgba(0,180,204,0.15)", flexShrink: 0 },
-  right: { width: "50%", display: "flex", flexDirection: "column", overflow: "hidden", background: "rgba(255,255,255,0.2)", backdropFilter: "blur(10px)" },
-  previewHeader: { display: "flex", alignItems: "center", gap: 8, padding: "8px 16px", borderBottom: "1px solid rgba(0,180,204,0.15)", flexShrink: 0, background: "rgba(255,255,255,0.4)" },
-  liveDot: { width: 7, height: 7, borderRadius: "50%", background: "#00c8a0", display: "inline-block", flexShrink: 0, animation: "livePulse 2.4s ease-in-out infinite" },
-  previewLabel: { fontSize: 10, fontFamily: "'JetBrains Mono',monospace", color: "#007a8a", letterSpacing: "1.5px" },
-  previewHint: { fontSize: 10, color: "rgba(0,150,170,0.35)", fontFamily: "'JetBrains Mono',monospace" },
-  previewBtn: { fontSize: 11, fontFamily: "'JetBrains Mono',monospace", background: "rgba(0,180,204,0.08)", border: "1px solid rgba(0,180,204,0.22)", color: "#007a8a", padding: "3px 9px", borderRadius: 6, cursor: "pointer", transition: "all 0.15s" },
-  iframe: { flex: 1, border: "none", background: "#fff", width: "100%", height: "100%" },
-};

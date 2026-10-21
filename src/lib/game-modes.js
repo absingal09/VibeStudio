@@ -77,14 +77,14 @@ const MODES = {
   "2d": {
     id: "2d",
     label: "2D Game Builder",
-    welcome: "Welcome to VibeStudio! Describe a 2D game and I'll build it. Detailed games can take a few minutes. Then switch to the Code tab to edit it live.",
+    welcome: "Tell me the game you wish existed. I’ll build a playable version, then we can remix it together. Bigger ideas can take a few minutes.",
     suggestions: ["Pinball with neon theme", "Flappy bird but a samurai", "Snake in space", "Brick breaker with fire"],
     fileName: "game-2d.html",
   },
   "3d": {
     id: "3d",
     label: "3D Sandbox",
-    welcome: "Your 3D sandbox is ready! Play Crystal Island in the preview, ask for changes, or describe a new 3D game. Use the Code tab to edit it. Click inside the preview for keyboard controls.",
+    welcome: "Your 3D sandbox starts on Crystal Island. Explore it, ask for a twist, or dream up a completely new game. Click inside the playground for keyboard controls.",
     suggestions: ["A 3D neon maze with collectible gems", "A low-poly racing game", "A 3D obstacle course with jumping", "Add more islands and bridges to this game"],
     fileName: "game-3d.html",
   },

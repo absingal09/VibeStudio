@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Crystal Island — 3D Sandbox</title>
+<style>
+*{box-sizing:border-box}body{margin:0;overflow:hidden;background:#071522;color:#edfaff;font:14px system-ui,sans-serif}canvas{display:block;touch-action:none}#hud{position:absolute;inset:18px 18px auto;display:flex;justify-content:space-between;gap:12px;pointer-events:none}.pill{background:#092434d9;border:1px solid #68e9ef40;padding:10px 14px;border-radius:14px;backdrop-filter:blur(10px)}#menu{position:absolute;inset:0;display:grid;place-items:center;background:#02101b7a}.card{width:min(350px,88vw);padding:28px;background:#082331e8;border:1px solid #7be9f255;border-radius:22px;box-shadow:0 24px 80px #0006}h1{font-size:32px;margin:7px 0 12px;letter-spacing:-1px}.eyebrow{color:#81f2dc;letter-spacing:3px;font-size:10px}p{color:#b3d0dc;line-height:1.7}.primary{border:0;border-radius:10px;padding:12px 18px;background:#8af4d3;color:#07322d;font-weight:700;cursor:pointer}#controls{position:absolute;bottom:14px;left:0;right:0;text-align:center;color:#b8deed;font-size:11px;pointer-events:none}#pad{position:absolute;bottom:42px;left:16px;display:grid;grid-template-columns:repeat(3,34px);gap:3px}#pad button{height:32px;border:1px solid #92f8ef55;color:#e0ffff;background:#103043bc;border-radius:8px;touch-action:none}#pad button:first-child{grid-column:2}#pad button:nth-child(2){grid-column:1}#error{position:absolute;inset:0;display:none;place-items:center;padding:32px;background:#071522}
+</style>
+</head>
+<body>
+<div id="hud"><div class="pill">◇ <strong id="score">0 / 12</strong> crystals</div><div class="pill"><span id="time">90</span>s</div></div>
+<div id="controls">WASD / arrows to move · drag to orbit · scroll to zoom</div>
+<div id="pad" aria-label="Movement controls"><button aria-label="Move forward" data-key="w">↑</button><button aria-label="Move left" data-key="a">←</button><button aria-label="Move backward" data-key="s">↓</button><button aria-label="Move right" data-key="d">→</button></div>
+<div id="menu"><div class="card"><span class="eyebrow">VIBESTUDIO · 3D SANDBOX</span><h1 id="title">Crystal Island</h1><p id="description">A tiny world, yours to explore. Collect all 12 glowing crystals before the clock runs out.</p><p>Move with WASD or arrow keys. Drag the scene to look around. You can also use the on-screen arrows.</p><button class="primary" id="start">Explore island →</button></div></div>
+<div id="error" role="alert"></div>
+<script>
+(() => {
+  const scoreLabel = document.getElementById('score');
+  const timeLabel = document.getElementById('time');
+  const menu = document.getElementById('menu');
+  const errorPanel = document.getElementById('error');
+  let renderer;
+  try { renderer = new THREE.WebGLRenderer({antialias:true}); }
+  catch { errorPanel.style.display='grid';errorPanel.textContent='This 3D sandbox requires WebGL2. Enable hardware acceleration or try another browser.';menu.style.display='none';return; }
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.shadowMap.enabled = true;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  document.body.prepend(renderer.domElement);
+  renderer.domElement.tabIndex = 0;
+  renderer.domElement.setAttribute('aria-label','Crystal Island 3D game');
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x071522);
+  scene.fog = new THREE.FogExp2(0x071522, 0.018);
+  const camera = new THREE.PerspectiveCamera(50,innerWidth/innerHeight,0.1,100);
+  scene.add(new THREE.HemisphereLight(0xa6e9ff,0x243527,2.3));
+  const sun = new THREE.DirectionalLight(0xffe6ba,3);
+  sun.position.set(8,16,10);sun.castShadow=true;sun.shadow.mapSize.set(1024,1024);
+  Object.assign(sun.shadow.camera,{left:-15,right:15,top:15,bottom:-15});
+  scene.add(sun);
+  function mesh(geometry,color,x,y,z){const m=new THREE.Mesh(geometry,new THREE.MeshStandardMaterial({color,roughness:0.65}));m.position.set(x,y,z);m.castShadow=true;m.receiveShadow=true;scene.add(m);return m;}
+  mesh(new THREE.CylinderGeometry(11,9.5,1.5,64),0x224d50,0,-0.75,0);
+  mesh(new THREE.CylinderGeometry(10.9,10.9,0.12,64),0x367c69,0,0.02,0);
+  const rim=mesh(new THREE.TorusGeometry(10.9,0.055,8,100),0x6fffd8,0,0.12,0);rim.rotation.x=Math.PI/2;
+  const grid=new THREE.GridHelper(20,20,0x70dbc0,0x467e72);grid.position.y=0.1;scene.add(grid);
+  const player = new THREE.Group();scene.add(player);
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.65,0.8,0.55),new THREE.MeshStandardMaterial({color:0xe7f8f8,roughness:0.35}));
+  body.position.y=0.65;body.castShadow=true;player.add(body);
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.5,0.4,0.48),new THREE.MeshStandardMaterial({color:0x91ffe3}));head.position.y=1.25;head.castShadow=true;player.add(head);
+  const visor = new THREE.Mesh(new THREE.BoxGeometry(0.35,0.1,0.03),new THREE.MeshStandardMaterial({color:0x0a3140}));visor.position.set(0,1.27,-0.25);player.add(visor);
+  const crystals=[];
+  for(let i=0;i<12;i++){
+    const angle=i*Math.PI*2/12,radius=i%2===0?7.6:4.8;
+    const crystal=mesh(new THREE.OctahedronGeometry(0.4),0x9c9bff,Math.cos(angle)*radius,0.9,Math.sin(angle)*radius);
+    crystal.material.emissive=new THREE.Color(0x6858c7);crystal.material.emissiveIntensity=0.8;
+    crystals.push(crystal);
+  }
+  for(let i=0;i<16;i++){
+    const angle=i*Math.PI*2/16,radius=9.5;
+    const x=Math.cos(angle)*radius,z=Math.sin(angle)*radius;
+    mesh(new THREE.CylinderGeometry(0.13,0.18,0.9,6),0x674e40,x,0.5,z);
+    mesh(new THREE.ConeGeometry(0.65,1.8,6),i%2?0x3c9976:0x4eb695,x,1.65,z);
+  }
+  const keys=new Set();let playing=false,score=0,time=90,yaw=0.65,pitch=0.85,distance=16,previous=0;
+  function reset(){score=0;time=90;playing=true;player.position.set(0,0,0);crystals.forEach(c=>c.visible=true);scoreLabel.textContent='0 / 12';timeLabel.textContent='90';menu.style.display='none';renderer.domElement.focus();}
+  function finish(won){playing=false;document.getElementById('title').textContent=won?'Island complete!':'Time to explore again';document.getElementById('description').textContent=won?'You found every crystal. Try a new route, or ask VibeStudio to change this world.':'You collected '+score+' of 12 crystals. Your next adventure starts here.';document.getElementById('start').textContent='Play again →';menu.style.display='grid';}
+  document.getElementById('start').addEventListener('click',reset);
+  addEventListener('keydown',event=>{if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(event.key))event.preventDefault();keys.add(event.key.toLowerCase());if(event.key===' '&&!playing)reset();});
+  addEventListener('keyup',event=>keys.delete(event.key.toLowerCase()));
+  addEventListener('blur',()=>keys.clear());
+  document.querySelectorAll('[data-key]').forEach(button=>{button.addEventListener('pointerdown',event=>{event.preventDefault();button.setPointerCapture(event.pointerId);keys.add(button.dataset.key);});['pointerup','pointercancel','lostpointercapture'].forEach(type=>button.addEventListener(type,()=>keys.delete(button.dataset.key)));});
+  let dragging=false,lastX=0,lastY=0;
+  renderer.domElement.addEventListener('pointerdown',event=>{dragging=true;lastX=event.clientX;lastY=event.clientY;renderer.domElement.setPointerCapture(event.pointerId);renderer.domElement.focus();});
+  renderer.domElement.addEventListener('pointermove',event=>{if(!dragging)return;yaw-=(event.clientX-lastX)*0.006;pitch=THREE.MathUtils.clamp(pitch+(event.clientY-lastY)*0.004,0.35,1.35);lastX=event.clientX;lastY=event.clientY;});
+  ['pointerup','pointercancel','lostpointercapture'].forEach(type=>renderer.domElement.addEventListener(type,()=>dragging=false));
+  renderer.domElement.addEventListener('wheel',event=>{event.preventDefault();distance=THREE.MathUtils.clamp(distance+event.deltaY*0.012,8,28);},{passive:false});
+  addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
+  function animate(now){
+    requestAnimationFrame(animate);const dt=Math.min((now-previous)/1000,0.05);previous=now;
+    if(playing){
+      time=Math.max(0,time-dt);timeLabel.textContent=String(Math.ceil(time));
+      let x=Number(keys.has('d')||keys.has('arrowright'))-Number(keys.has('a')||keys.has('arrowleft'));
+      let z=Number(keys.has('s')||keys.has('arrowdown'))-Number(keys.has('w')||keys.has('arrowup'));
+      const length=Math.hypot(x,z);if(length){x/=length;z/=length;const dx=x*Math.cos(yaw)+z*Math.sin(yaw),dz=-x*Math.sin(yaw)+z*Math.cos(yaw);player.position.x+=dx*5*dt;player.position.z+=dz*5*dt;player.rotation.y=Math.atan2(-dx,-dz);}
+      if(player.position.length()>10.3)player.position.setLength(10.3);
+      for(const crystal of crystals)if(crystal.visible&&Math.hypot(crystal.position.x-player.position.x,crystal.position.z-player.position.z)<0.85){crystal.visible=false;score++;scoreLabel.textContent=score+' / 12';}
+      if(score===12)finish(true);else if(time===0)finish(false);
+    }
+    crystals.forEach((crystal,i)=>{crystal.rotation.y+=dt;crystal.position.y=0.9+Math.sin(now*0.002+i)*0.15;});
+    camera.position.set(player.position.x+Math.sin(yaw)*Math.cos(pitch)*distance,Math.sin(pitch)*distance,player.position.z+Math.cos(yaw)*Math.cos(pitch)*distance);
+    camera.lookAt(player.position.x,0.5,player.position.z);renderer.render(scene,camera);
+  }
+  requestAnimationFrame(animate);
+})();
+</script>
+</body>
+</html>

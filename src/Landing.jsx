@@ -117,9 +117,9 @@ const MODES = [
     examples: ["Flappy Bird", "Snake", "Pinball", "Platformer"],
   },
   {
-    id: "3d", title: "3D Games", badge: "Coming Soon", active: false,
+    id: "3d", title: "3D Sandbox", badge: "Available Now", active: true,
     accent: "#a855f7", border: "rgba(168,85,247,0.22)", bg: "rgba(168,85,247,0.05)",
-    icon: "◇", desc: "Full 3D environments with WebGL rendering, spatial mechanics, and immersive first-person worlds.",
+    icon: "◇", desc: "Playable Three.js worlds with real 3D rendering, camera controls, and self-contained game exports.",
     examples: ["Racing", "FPS", "Adventure", "Puzzle"],
   },
   {
@@ -630,7 +630,7 @@ export default function Landing({ onEnterStudio }) {
         <div className="reveal" style={s.sectionHead}>
           <span style={s.eyebrow}>Game Modes</span>
           <h2 style={s.secTitle}>Choose Your Dimension</h2>
-          <p style={s.secSub}>Four worlds to build in. One is ready right now.</p>
+          <p style={s.secSub}>Build in 2D or step into the 3D sandbox.</p>
         </div>
 
         <div style={s.grid}>
@@ -668,7 +668,7 @@ export default function Landing({ onEnterStudio }) {
               {m.id === "2d"
                 ? <canvas ref={canvasRef} style={s.miniCanvas} />
                 : <div style={{ height: 95, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    <span style={{ fontSize: 40, opacity: 0.07 }}>{m.icon}</span>
+                    <span style={{ fontSize: m.active ? 64 : 40, opacity: m.active ? 0.85 : 0.07, color: m.accent, textShadow: m.active ? "0 0 32px #a855f7" : "none" }}>{m.icon}</span>
                   </div>
               }
 
@@ -685,12 +685,13 @@ export default function Landing({ onEnterStudio }) {
               </div>
 
               {m.active && (
-                <div
-                  onClick={(e) => { e.stopPropagation(); onEnterStudio(); }}
-                  style={{ fontSize: 13, fontWeight: 600, color: "#00b4cc", display: "flex", alignItems: "center", marginTop: 4, cursor: "pointer", userSelect: "none", width: "fit-content" }}
+                <button
+                  aria-label={`Open ${m.title}`}
+                  onClick={(e) => { e.stopPropagation(); onEnterStudio(m.id); }}
+                  style={{ fontSize: 13, fontFamily: "inherit", fontWeight: 600, color: m.accent, display: "flex", alignItems: "center", marginTop: 4, cursor: "pointer", userSelect: "none", width: "fit-content", background: "transparent", border: 0, padding: 0 }}
                 >
-                  Open Studio →
-                </div>
+                  {m.id === "3d" ? "Open 3D Sandbox →" : "Open Studio →"}
+                </button>
               )}
               {!m.active && hoveredCard === m.id && (
                 <div style={s.tooltip}>Coming Soon</div>

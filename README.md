@@ -14,11 +14,13 @@ Type a plain-English description of a game. VibeStudio uses Sarvam's API to gene
 
 ## Features
 
-- **Prompt to game** — describe a 2D game in plain English and generate a playable result
+- **2D and 3D studios** — generate Canvas games or genuine Three.js/WebGL games, with separate code and chat sessions for each mode
+- **Playable 3D starter** — open the 3D Sandbox and explore Crystal Island immediately; collect crystals, orbit the camera, and race the timer
 - **Live code editor** — syntax-highlighted editor with line numbers; changes reflect in the preview automatically
 - **Sandboxed live preview** — games run in an isolated `<iframe sandbox="allow-scripts">` with no external dependencies
 - **Iterative refinement** — chat to request changes; the AI reads the existing code and applies only what you asked
 - **Copy & download** — export the generated game as a standalone `.html` file
+- **Self-contained 3D exports** — the Three.js engine is bundled into previews and downloads; games need no CDN, external assets, or extra API key
 - **Fullscreen preview** — expand the game to fill the screen
 - **One AI integration** — GLM-5.3 through Sarvam's Chat Completion V2 API, using one server-side API key
 - **Interactive landing page** — animated hero, particle effects, parallax orbs, and a playable mini breakout demo
@@ -32,6 +34,7 @@ Type a plain-English description of a game. VibeStudio uses Sarvam's API to gene
 | Frontend | React 19, Vite 8 |
 | AI | Sarvam Chat Completion V2 — GLM-5.3 |
 | Code Editor | `@uiw/react-textarea-code-editor` |
+| 3D Runtime | Three.js 0.186.1 / WebGL2 |
 | Styling | Inline styles + CSS-in-JS (no external CSS framework) |
 | Deployment | Vercel |
 
@@ -76,10 +79,19 @@ This means:
 The AI is given a strict system prompt that enforces:
 - Single-file HTML output (no markdown, no code fences)
 - `requestAnimationFrame` game loops (never `setInterval`)
-- HTML5 Canvas rendering only (no DOM manipulation for game objects)
+- 2D mode: HTML5 Canvas rendering with vanilla JavaScript
+- 3D mode: Three.js meshes, procedural geometry, lighting, cameras, and WebGL rendering; the studio supplies the bundled engine as `window.THREE`
 - Mandatory start screen, score counter, and game-over screen
 - Responsive canvas that fills the viewport
-- Pure vanilla JS — no libraries
+- No external assets, loaders, imports, or CDN libraries; 3D uses only the provided Three.js core
+
+### 3D Sandbox
+
+Choose **3D Sandbox** on the landing page or use the **2D / 3D** buttons in the studio. The default Crystal Island game works without an AI request. Click **Explore island**, use WASD/arrow keys or the on-screen controls to move, drag to orbit the camera, and scroll to zoom. Chat can refine the starter or build a different 3D game.
+
+The engine loads only when 3D is opened. The preview stays in the same `allow-scripts` sandbox, and preview errors appear above it. The code editor shows game code; Copy and Download automatically include the engine and its license. Switching modes preserves each mode's code, chat, and draft for the current browser session; reloading the page resets them.
+
+3D requires a browser with WebGL2 support. There is a readable fallback message when it is unavailable. Multiplayer and AI NPCs remain planned features.
 
 ---
 
@@ -132,6 +144,7 @@ The `api/chat.js` function serves the endpoint in production. `vercel.json` give
 ```
 api/chat.js        # Single Sarvam request handler
 server/chat-api.js # Vite adapter for the same endpoint during development
+server/three-runtime.js # Builds a portable Three.js runtime for previews and exports
 .env.example      # One server-side API key setting
 src/
 ├── App.jsx        # Main studio — chat, code editor, live preview, AI pipeline
@@ -162,7 +175,7 @@ API tests mock Sarvam responses; they do not use a real key or consume credits. 
 
 ## Roadmap
 
-- [ ] 3D game generation (WebGL / Three.js)
+- [x] 3D game generation (WebGL / Three.js)
 - [ ] Multiplayer rooms (WebSocket)
 - [ ] AI NPCs with live decision-making
 - [ ] Game gallery / sharing

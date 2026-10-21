@@ -1,80 +1,31 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import CodeEditor from "@uiw/react-textarea-code-editor";
 import Landing from "./Landing";
 import { fetchGame } from "./lib/ai";
+import { buildGenerationRequest, createWorkspace, getMode, hasGameCode } from "./lib/game-modes";
+import { buildPlayableDocument } from "./lib/preview";
+import threeStarter from "./templates/three-starter.html?raw";
 
-
-const SYSTEM_PROMPT = `\
-You are an expert browser game developer for VibeStudio — an AI-powered game generator that instantly creates fully playable HTML5 games from plain-English descriptions.
-
-## YOUR ROLE
-You produce complete, self-contained, immediately playable browser games as a single raw HTML file.
-Every game runs inside a sandboxed iframe (sandbox="allow-scripts") with zero external dependencies.
-
-## OUTPUT FORMAT — STRICTLY ENFORCED
-- Return ONLY raw HTML starting with <!DOCTYPE html> and ending with </html>
-- NO markdown, NO code fences (\`\`\`), NO backticks, NO prose explanation before or after the code
-- The entire game — HTML structure, CSS styles, and JavaScript logic — lives inside one file
-- Violating this format will break the app. Output the HTML and nothing else.
-
-## EVERY GAME MUST HAVE
-1. A smooth game loop using requestAnimationFrame (never setInterval)
-2. A start screen showing the game title and controls
-3. Keyboard and/or mouse controls with clear on-screen instructions
-4. A live score counter visible during gameplay
-5. A game-over screen showing the final score and a "Play Again" button
-6. Polished visuals rendered on an HTML5 Canvas element
-7. At least a simple animated background (gradient, stars, parallax, etc.)
-8. No crashes, no infinite loops, no broken references — the game must be fully playable
-
-## TECHNICAL RULES
-- Use HTML5 Canvas for all game rendering — never manipulate DOM elements for game objects
-- All assets must be generated programmatically (shapes, gradients, procedural art) — no external images, fonts, or CDN scripts
-- Pure vanilla JavaScript only — no jQuery, Phaser, p5.js, or any library
-- Canvas must fill the full viewport (window.innerWidth × window.innerHeight) and resize on window resize
-- Handle both keyboard (arrow keys / WASD / space) and mouse where appropriate
-
-## VISUAL QUALITY BAR
-- Vibrant color palette — avoid plain white or grey backgrounds
-- Glow effects, particle bursts, and smooth animations make games feel polished
-- UI elements (score, lives, level) should be styled, not plain browser text
-- Game-over and start screens should look designed, not like a plain alert
-
-## WHEN REFINING AN EXISTING GAME
-- Read the full existing code before making any change
-- Apply ONLY what was asked — do not rewrite unrelated sections
-- Preserve all existing game logic, scoring, visual style, and control scheme unless explicitly told to change them
-- Always return the COMPLETE updated HTML file from <!DOCTYPE html> to </html>`;
 
 function extractHTML(text) {
-  const match = text.match(/```html\n?([\s\S]*?)```/);
-  if (match) return match[1];
-  if (/^(<!|<html|<canvas|<style|<script)/i.test(text.trim())) return text;
-  return text;
+  const match = text.match(/\x60\x60\x60(?:html)?\s*([\s\S]*?)\x60\x60\x60/i);
+  return (match ? match[1] : text).trim();
 }
 
-const DEFAULT_CODE = `<!DOCTYPE html>
-<html>
-<body style="display:flex;align-items:center;justify-content:center;height:100vh;margin:0;font-family:sans-serif;color:#888;background:#f8fffe;">
-  <p>Your game will appear here. Generate one from the Chat tab!</p>
-</body>
-</html>`;
-
-const SUGGESTIONS = [
-  "Pinball with neon theme",
-  "Flappy bird but a samurai",
-  "Snake in space",
-  "Brick breaker with fire",
-];
-
 export default function App() {
+  const initialMode = getMode(new URLSearchParams(window.location.search).get("mode")).id;
+  const [mode, setMode] = useState(initialMode);
+  const currentMode = getMode(mode);
   const [tab, setTab] = useState("chat");
-  const [showHome, setShowHome] = useState(true);
-  const [messages, setMessages] = useState([
-    { role: "assistant", content: "Welcome to VibeStudio! Describe a 2D game and I'll build it. Detailed games can take a few minutes. Then switch to the Code tab to edit it live." },
-  ]);
+  const [showHome, setShowHome] = useState(() => !["2d", "3d"].includes(new URLSearchParams(window.location.search).get("mode")));
+  const [messages, setMessages] = useState(() => createWorkspace(initialMode, threeStarter).messages);
   const [input, setInput] = useState("");
-  const [code, setCode] = useState(DEFAULT_CODE);
+  const [code, setCode] = useState(() => createWorkspace(initialMode, threeStarter).code);
+  const [previewCode, setPreviewCode] = useState(code);
+  const [threeRuntime, setThreeRuntime] = useState("");
+  const [runtimeError, setRuntimeError] = useState("");
+  const [runtimeAttempt, setRuntimeAttempt] = useState(0);
+  const [previewError, setPreviewError] = useState("");
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState({ phase: "connecting", characters: 0 });
   const [elapsed, setElapsed] = useState(0);
@@ -87,6 +38,74 @@ export default function App() {
   const inputRef = useRef(null);
   const editorWrapRef = useRef(null);
   const lineNumsRef = useRef(null);
+  const iframeRef = useRef(null);
+  const pendingPromptRef = useRef("");
+  const workspacesRef = useRef({ "2d": createWorkspace("2d"), "3d": createWorkspace("3d", threeStarter) });
+
+  useEffect(() => {
+    if (mode !== "3d" || threeRuntime) return;
+    let active = true;
+    import("./lib/three-runtime.js").then(({ default: runtime }) => {
+      if (active) setThreeRuntime(runtime);
+    }).catch(() => {
+      if (active) setRuntimeError("The 3D engine could not load. Please retry.");
+    });
+    return () => { active = false; };
+  }, [mode, threeRuntime, runtimeAttempt]);
+
+  useEffect(() => {
+    const onMessage = (event) => {
+      if (event.source !== iframeRef.current?.contentWindow) return;
+      if (event.data?.type === "vibestudio-preview-error" && typeof event.data.message === "string") {
+        setPreviewError(event.data.message.slice(0, 400));
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
+
+  const previewDocument = useMemo(() => mode === "3d" && !threeRuntime ? "" : buildPlayableDocument(previewCode, mode, threeRuntime), [previewCode, mode, threeRuntime]);
+
+  const enterStudio = (requestedMode = "2d") => {
+    const nextMode = getMode(requestedMode).id;
+    if (nextMode !== mode) {
+      workspacesRef.current[mode] = { code, messages, input: input || (loading ? pendingPromptRef.current : "") };
+      const controller = abortRef.current;
+      abortRef.current = null;
+      controller?.abort();
+      clearTimeout(previewTimeout.current);
+      const workspace = workspacesRef.current[nextMode];
+      setMode(nextMode);
+      setCode(workspace.code);
+      setPreviewCode(workspace.code);
+      setMessages(workspace.messages);
+      setInput(workspace.input);
+      setLoading(false);
+      setFullscreen(false);
+      setCopied(false);
+      setPreviewError("");
+      setPreviewKey((key) => key + 1);
+    }
+    setShowHome(false);
+    const url = new URL(window.location.href);
+    url.searchParams.set("mode", nextMode);
+    window.history.replaceState(null, "", url);
+  };
+
+  const goHome = () => {
+    abortRef.current?.abort();
+    setShowHome(true);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("mode");
+    window.history.replaceState(null, "", url);
+  };
+
+  const runPreview = () => {
+    clearTimeout(previewTimeout.current);
+    setPreviewError("");
+    setPreviewCode(code);
+    setPreviewKey((key) => key + 1);
+  };
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -139,7 +158,11 @@ export default function App() {
   const handleCodeChange = useCallback((val) => {
     setCode(val);
     clearTimeout(previewTimeout.current);
-    previewTimeout.current = setTimeout(() => setPreviewKey((k) => k + 1), 800);
+    previewTimeout.current = setTimeout(() => {
+      setPreviewError("");
+      setPreviewCode(val);
+      setPreviewKey((k) => k + 1);
+    }, 800);
   }, []);
 
   const sendMessage = async () => {
@@ -149,7 +172,8 @@ export default function App() {
     setInput("");
     if (inputRef.current) inputRef.current.style.height = "38px";
 
-    const isRefine = !code.includes("Your game will appear here");
+    const isRefine = hasGameCode(code);
+    pendingPromptRef.current = userText;
     setMessages((prev) => [...prev, { role: "user", content: userText }]);
     setLoading(true);
     setElapsed(0);
@@ -159,19 +183,19 @@ export default function App() {
     const controller = new AbortController();
     abortRef.current = controller;
 
-    const prompt = isRefine
-      ? `Here is the current game code:\n\n${code}\n\nUser request: "${userText}"`
-      : `Create a 2D browser game: "${userText}"`;
+    const { prompt, systemPrompt } = buildGenerationRequest(mode, userText, code);
 
     try {
       const text = await fetchGame(prompt, {
-        systemPrompt: SYSTEM_PROMPT,
+        systemPrompt,
         signal: controller.signal,
         onProgress: setProgress,
       });
       if (abortRef.current !== controller) return;
       const html = extractHTML(text);
       setCode(html);
+      setPreviewCode(html);
+      setPreviewError("");
       setPreviewKey((k) => k + 1);
       setMessages((prev) => [...prev, {
         role: "assistant",
@@ -204,24 +228,25 @@ export default function App() {
   };
 
   const copyCode = () => {
-    navigator.clipboard.writeText(code);
+    navigator.clipboard.writeText(buildPlayableDocument(code, mode, threeRuntime));
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
   const downloadCode = () => {
-    const blob = new Blob([code], { type: "text/html" });
+    const blob = new Blob([buildPlayableDocument(code, mode, threeRuntime)], { type: "text/html" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "game.html";
+    a.download = currentMode.fileName;
     a.click();
     URL.revokeObjectURL(url);
   };
 
-  const hasGame = !code.includes("Your game will appear here");
+  const hasGame = hasGameCode(code);
+  const engineReady = mode !== "3d" || Boolean(threeRuntime);
 
-  if (showHome) return <Landing onEnterStudio={() => setShowHome(false)} />;
+  if (showHome) return <Landing onEnterStudio={enterStudio} />;
 
   return (
     <div style={s.root}>
@@ -257,18 +282,21 @@ export default function App() {
       {/* NAV */}
       <div style={s.nav}>
         <div style={s.navLeft}>
-          <button className="icon-btn" style={{ ...s.navBtn, fontSize: 12, marginRight: 4 }} onClick={() => setShowHome(true)} title="Back to home">← Home</button>
+          <button className="icon-btn" style={{ ...s.navBtn, fontSize: 12, marginRight: 4 }} onClick={goHome} title="Back to home">← Home</button>
           <span style={s.navLogo}>◈</span>
           <span style={s.navName}>VibeStudio</span>
-          <span style={s.navTag}>2D Game Builder</span>
+          <span style={s.navTag}>{currentMode.label}</span>
+          <div role="group" aria-label="Game dimension" style={{ display: "flex", gap: 4 }}>
+            {["2d", "3d"].map((dimension) => <button key={dimension} className="icon-btn" style={{ ...s.navBtn, background: mode === dimension ? "rgba(0,180,204,0.2)" : "transparent" }} aria-pressed={mode === dimension} onClick={() => enterStudio(dimension)}>{dimension.toUpperCase()}</button>)}
+          </div>
         </div>
         <div style={s.navRight}>
           {hasGame && (
             <>
-              <button className="icon-btn" style={s.navBtn} onClick={copyCode} title="Copy HTML to clipboard">
+              <button className="icon-btn" style={s.navBtn} onClick={copyCode} disabled={!engineReady} title="Copy self-contained HTML to clipboard">
                 {copied ? "✓ Copied" : "⎘ Copy"}
               </button>
-              <button className="icon-btn" style={s.navBtn} onClick={downloadCode} title="Download as HTML file">
+              <button className="icon-btn" style={s.navBtn} onClick={downloadCode} disabled={!engineReady} title="Download as self-contained HTML file">
                 ↓ Download
               </button>
             </>
@@ -319,7 +347,7 @@ export default function App() {
                   <div style={s.suggestionsWrap}>
                     <span style={s.suggestLabel}>Try these:</span>
                     <div style={s.suggestions}>
-                      {SUGGESTIONS.map((sg) => (
+                      {currentMode.suggestions.map((sg) => (
                         <button key={sg} className="suggestion" style={s.suggestion} onClick={() => { setInput(sg); inputRef.current?.focus(); }}>{sg} →</button>
                       ))}
                     </div>
@@ -357,9 +385,9 @@ export default function App() {
                     {code.split("\n").length} lines
                   </span>
                   <div style={{ display: "flex", gap: 6 }}>
-                    <button className="icon-btn" style={s.runBtn} onClick={copyCode}>{copied ? "✓ Copied" : "⎘ Copy"}</button>
-                    <button className="icon-btn" style={s.runBtn} onClick={downloadCode}>↓ Download</button>
-                    <button className="icon-btn" style={{ ...s.runBtn, borderColor: "rgba(0,180,204,0.4)", color: "#00a0b0" }} onClick={() => setPreviewKey((k) => k + 1)}>▶ Run</button>
+                    <button className="icon-btn" style={s.runBtn} onClick={copyCode} disabled={!engineReady}>{copied ? "✓ Copied" : "⎘ Copy"}</button>
+                    <button className="icon-btn" style={s.runBtn} onClick={downloadCode} disabled={!engineReady}>↓ Download</button>
+                    <button className="icon-btn" style={{ ...s.runBtn, borderColor: "rgba(0,180,204,0.4)", color: "#00a0b0" }} onClick={runPreview}>▶ Run</button>
                   </div>
                 </div>
                 <div ref={editorWrapRef} style={{ display: "flex", flex: 1, overflow: "auto", margin: 10, borderRadius: 8, background: "rgba(0,40,50,0.78)", alignItems: "flex-start" }}>
@@ -400,13 +428,21 @@ export default function App() {
             <span style={s.previewLabel}>LIVE PREVIEW</span>
             <div style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
               {!fullscreen && <span style={s.previewHint}>auto-updates as you edit</span>}
-              <button className="icon-btn" style={s.previewBtn} onClick={() => setPreviewKey((k) => k + 1)} title="Refresh preview">↺</button>
+              <button className="icon-btn" style={s.previewBtn} onClick={runPreview} title="Refresh preview">↺</button>
               <button className="icon-btn" style={s.previewBtn} onClick={() => setFullscreen((f) => !f)} title={fullscreen ? "Exit fullscreen" : "Expand preview"}>
                 {fullscreen ? "⊠ Exit" : "⊡ Expand"}
               </button>
             </div>
           </div>
-          <iframe key={previewKey} srcDoc={code} style={s.iframe} sandbox="allow-scripts" title="Game Preview" />
+          {previewError && <div role="alert" style={{ padding: "10px 16px", color: "#9d2339", background: "#fff1f3", fontSize: 12 }}>Preview error: {previewError} — edit the code or ask for a fix, then run again.</div>}
+          {engineReady ? (
+            <iframe ref={iframeRef} key={previewKey} srcDoc={previewDocument} style={s.iframe} sandbox="allow-scripts" title={mode === "3d" ? "3D Game Preview" : "Game Preview"} />
+          ) : (
+            <div role="status" style={{ ...s.iframe, display: "grid", placeContent: "center", textAlign: "center", gap: 12, padding: 24 }}>
+              <p>{runtimeError || "Preparing your 3D sandbox…"}</p>
+              {runtimeError && <button style={s.runBtn} onClick={() => { setRuntimeError(""); setRuntimeAttempt((attempt) => attempt + 1); }}>Retry 3D engine</button>}
+            </div>
+          )}
         </div>
       </div>
     </div>
